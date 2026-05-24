@@ -5,4 +5,5 @@ requires-python = ">=3.11"
 dependencies = [
     "python-telegram-bot[webhooks]==22.7",
     "python-dotenv==1.2.2",
+    "aiohttp==3.13.5",
 ]
