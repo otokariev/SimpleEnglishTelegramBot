@@ -1,6 +1,7 @@
 import json
 import os
 import random
+from aiohttp import web
 
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
@@ -61,7 +62,6 @@ async def send_word(update: Update) -> None:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Just start/resume without resetting progress."""
     state["finished"] = False
     state["awaiting_add"] = False
     await update.message.reply_text("▶️ Resuming! Your progress is saved.", reply_markup=keyboard)
@@ -69,7 +69,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Reset all progress and restart."""
     state["words"] = dict(ALL_WORDS)
     state["current_word"] = None
     state["finished"] = False
@@ -92,7 +91,7 @@ async def skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def add_word(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     state["awaiting_add"] = True
     await update.message.reply_text(
-        "✏️ Send the word and translation in format:\n`word — translation`",
+        "✏️ Send the word and translation in format:\n`word - translation`",
         parse_mode="Markdown",
         reply_markup=keyboard,
     )
@@ -120,10 +119,12 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if not word or not translation:
             await update.message.reply_text("⚠️ Both word and translation must be non-empty.", reply_markup=keyboard)
             return
+
         if word in ALL_WORDS:
             await update.message.reply_text(f"⚠️ *{word}* already exists: {ALL_WORDS[word]}", parse_mode="Markdown", reply_markup=keyboard)
             state["awaiting_add"] = False
             return
+
         ALL_WORDS[word] = translation
         state["words"][word] = translation
         save_all_words(ALL_WORDS)
@@ -132,11 +133,12 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(f"✅ Added: *{word}* → {translation}", parse_mode="Markdown", reply_markup=keyboard)
         return
 
-    # --- answer check flow ---
     if state["finished"] or not state["current_word"]:
         return
+
     user_answer = update.message.text.strip()
     correct = state["words"][state["current_word"]]
+
     if user_answer.lower() == correct.lower():
         del state["words"][state["current_word"]]
         save_progress(state["words"])
@@ -148,6 +150,10 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("❌ Wrong!", reply_markup=keyboard)
 
 
+async def health(request):
+    return web.Response(text="OK")
+
+
 app = Application.builder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
@@ -157,11 +163,15 @@ app.add_handler(CommandHandler("add_word", add_word))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_message))
 
 if WEBHOOK_URL:
+    web_app = web.Application()
+    web_app.router.add_get("/", health)
+
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         webhook_url=f"{WEBHOOK_URL}/webhook",
         url_path="webhook",
+        webserver=web_app,
     )
 else:
     app.run_polling()
