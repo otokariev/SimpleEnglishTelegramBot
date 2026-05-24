@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import random
@@ -154,24 +155,41 @@ async def health(request):
     return web.Response(text="OK")
 
 
-app = Application.builder().token(TOKEN).build()
+async def main():
+    tg_app = Application.builder().token(TOKEN).build()
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("restart", restart))
-app.add_handler(CommandHandler("skip", skip))
-app.add_handler(CommandHandler("add_word", add_word))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_message))
+    tg_app.add_handler(CommandHandler("start", start))
+    tg_app.add_handler(CommandHandler("restart", restart))
+    tg_app.add_handler(CommandHandler("skip", skip))
+    tg_app.add_handler(CommandHandler("add_word", add_word))
+    tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_message))
 
-if WEBHOOK_URL:
-    web_app = web.Application()
-    web_app.router.add_get("/", health)
+    if WEBHOOK_URL:
+        web_app = web.Application()
+        web_app.router.add_get("/", health)
 
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=f"{WEBHOOK_URL}/webhook",
-        url_path="webhook",
-        webserver=web_app,
-    )
-else:
-    app.run_polling()
+        async def handle_webhook(request):
+            data = await request.json()
+            update = Update.de_json(data, tg_app.bot)
+            await tg_app.update_queue.put(update)
+            return web.Response(text="OK")
+
+        web_app.router.add_post("/webhook", handle_webhook)
+
+        await tg_app.initialize()
+        await tg_app.start()
+        await tg_app.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
+
+        runner = web.AppRunner(web_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", PORT)
+        await site.start()
+
+        print(f"Bot running on port {PORT}")
+        await asyncio.Event().wait()
+    else:
+        tg_app.run_polling()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
